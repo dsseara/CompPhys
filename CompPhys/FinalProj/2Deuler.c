@@ -3,14 +3,14 @@
 
 double G = 1.4;  //Adiabatic heat index
 
-double L = 1.0;  //Length of box
-double H = 1.0;  //Height of box
-int COLS = 200;  //Columns
-int ROWS = 200;  //Rows
+double L = 0.75 ;  //Length of box
+double H = 1.5;  //Height of box
+int COLS = 250;  //Columns
+int ROWS = 250;  //Rows
 int   Nq = 4;   //Number of conserved quantities
 int   Ng = 2;   //Number of ghost zones
-double T = 0.2; //Total time integrated over
-
+double T = 2.00; //Total time integrated over
+double gravity = -0.2; //acceleration due to gravity
 
 enum{PPP, RHO, VXX, VYY}; //pressure, mass density, velocity in x, velocity in y
 enum{DEN, MOX, MOY, EEE}; //mass density, momentum in x, momentum in y, energy
@@ -22,7 +22,7 @@ double getx (int j){
 }
 
 double gety (int i){
-	return( H*( ( (double)(i-Ng) + 0.5) / (double)ROWS) );
+	return( H*( ( (double)(i-Ng) + 0.5) / (double)ROWS ));
 }
 
 //given a U vector in zone i, get the corresponding
@@ -67,7 +67,7 @@ primToCons(double * prim, double * u){
 	density = rho;
 	momentX = rho*vx;
 	momentY = rho*vy;
-	Energy  = P/(gamma - 1) + 0.5 * rho * (vx*vx + vy*vy);
+	Energy  = P/(gamma - 1.0) + 0.5 * rho * (vx*vx + vy*vy);
 
 	u[DEN] = density;
 	u[MOX] = momentX;
@@ -83,12 +83,12 @@ void alpha(double * alphX, double * alphY,  double * prim){
 	double maxM = -1e4;
 	double alphPset[3], alphMset[3];
 	double pL[4], pR[4];
-	double vL, vR, vB, vA; //velocities left, right, below, above
+	double vL, vR; //velocities left, right
 	
 	//X Direction
 	for(i=0; i<(ROWS+2*Ng); ++i){
 		for(j=0; j<(COLS+2*Ng-1); ++j){
-			//Get left and right cells at boundays
+			//Get left and right cells at boundarys
 			for(q=0; q<Nq; ++q){
 				int jiq = Nq*(COLS+2*Ng)*i+ Nq*j +q; //Gets to cell (j,i), and 
 				pL[q] = prim[jiq];	      //quantity q in that cell
@@ -169,25 +169,36 @@ void alpha(double * alphX, double * alphY,  double * prim){
 void set_initial(double * prim){
 	int i, j, q;
 	double gamma = G;
+	double A     = 0.025; //amplitude of perturbation
+	double p0    =  3.0; //arbitrary initial pressure
+	double sigma =  0.2;
 
-	/*Initial left half of shock tube****/
-	double left[4] = {1.0, 1.0, 0.0, 0.0};
-	/*Initial right half of shock tube***/
-	double right[4] = {0.1, 0.125, 0.0, 0.0};
-
+	/*Initial top half of fluid****/
+	double top[4] = {0.0, 5.0, 0.0, 0.0};
+	/*Initial bottom half of tube***/
+	double bot[4] = {0.0, 1.0, 0.0, 0.0};
 	
-	for(i =0 ; i<(ROWS+2*Ng) ; i++){
-		for(j=0; j<(COLS+2*Ng); j++){
-			for(q=0; q<Nq; q++){
+	for(i =0 ; i<(ROWS+2*Ng) ; ++i){
+		for(j=0; j<(COLS+2*Ng); ++j){
+			for(q=0; q<Nq; ++q){
 
 				double x = getx(j);
 				double y = gety(i);
+
+				top[VYY] = A*(1 + sin(M_PI*x / L))*exp(-(y - 0.5*H)*(y-0.5*H)/(sigma*sigma));
+				top[PPP] = p0 + bot[RHO]*gravity*0.5*H + top[RHO]*gravity*(y-0.5*H);
+
+
+				bot[VYY] = A*(1 + sin(M_PI*x / L))*exp(-(y - 0.5*H)*(y-0.5*H)/(sigma*sigma));
+				bot[PPP] = p0 + bot[RHO] * gravity * y;
+
 				int jiq = Nq*(COLS+2*Ng)*i + Nq*j + q;
 
-				if(y+x < 0.5){
-					prim[jiq] = left[q];
+			//	if(y < (0.5*H + A*sin(M_PI*x/L))){
+				if(y < 0.5*H){
+					prim[jiq] = bot[q];
 				}else{
-					prim[jiq] = right[q];
+					prim[jiq] = top[q];
 				
 				}
 
@@ -269,27 +280,6 @@ double advance(double * prim, double dx, double dy, double dt){
 	double pAi[Nq*(COLS + 2*Ng)];
 	double pBi[Nq*(COLS + 2*Ng)];
 
-	///////////////////////////
-/*
-	//Constant boundary conditions
-	//Store left and right side
-	for(i=0; i<(ROWS+2*Ng); ++i){
-		for(q=0; q<Nq; ++q){
-			pLi[Nq*i + q] = prim[Nq*(COLS+2*Ng)*i + Nq*0               + q];
-			pRi[Nq*i + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+2*Ng - 1) + q];
-		}
-	}
-
-	//Store top and bottom
-	for(j=0; j<(COLS+2*Ng); ++j){
-		for(q=0; q<Nq; ++q){
-			pBi[Nq*j + q] = prim[Nq*(COLS+2*Ng)*0             + Nq*j + q];
-			pAi[Nq*j + q] = prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng-1) + Nq*j + q];
-		}
-	}
-	/////////////////////////////////
-*/	
-	
 	//Enforce Courant condition, dt < dx/(MAX alpha)
 	double alphMax = -1e-4;
 
@@ -303,7 +293,8 @@ double advance(double * prim, double dx, double dy, double dt){
 		if(alphY[i] > alphMax) alphMax = alphY[i];
 	}
 
-	if(dt > dy/alphMax) dt = 0.5*dy/alphMax;
+	if(dt >     dy/alphMax) dt = 0.8*dy/alphMax;
+	if(dt < 0.1*dy/alphMax) dt = 0.5*dy/alphMax;
 	////////////////////////////////////////////////
 	
 	//Find fluxes in X direction
@@ -326,6 +317,7 @@ double advance(double * prim, double dx, double dy, double dt){
 				pL[q] = prim[jiq];
 				pR[q] = prim[jiq + Nq];
 			}
+
 			primToCons(pL, uL);
 			primToCons(pR, uR);
 			
@@ -346,6 +338,10 @@ double advance(double * prim, double dx, double dy, double dt){
 	}
 
 	//Find fluxes in Y direction
+	//with gravitational source term
+	double sourceL[4] = {0.0, 0.0, 0.0, 0.0};
+	double sourceR[4] = {0.0, 0.0, 0.0, 0.0};
+
 	for(j=0; j<(COLS+2*Ng); ++j){
 		for(i=0; i<(ROWS+2*Ng-1); ++i){
 			for(q=0; q<Nq; ++q){
@@ -365,12 +361,18 @@ double advance(double * prim, double dx, double dy, double dt){
 				pL[q] = prim[jiq];
 				pR[q] = prim[jiq + Nq*(COLS+2*Ng)];
 			}
+
+			sourceL[2] = pL[RHO]*gravity;
+			sourceL[3] = pL[RHO]*pL[VYY]*gravity;
+			sourceR[2] = pR[RHO]*gravity;
+			sourceR[3] = pR[RHO]*pR[VYY]*gravity;
+
 			primToCons(pL, uL);
 			primToCons(pR, uR);
 			
 			for(q=0; q<Nq; ++q){
-				uL[q] -= Giph[Nq*(ROWS+2*Ng-1)*j + Nq*i + q]*dt/dy;
-				uR[q] += Giph[Nq*(ROWS+2*Ng-1)*j + Nq*i + q]*dt/dy;
+				uL[q] -= (Giph[Nq*(ROWS+2*Ng-1)*j + Nq*i + q]*dt/dy + dt*sourceL[q]);
+				uR[q] +=  Giph[Nq*(ROWS+2*Ng-1)*j + Nq*i + q]*dt/dy + dt*sourceR[q] ;
 			}
 
 			consToPrim(uL, pL);
@@ -384,55 +386,46 @@ double advance(double * prim, double dx, double dy, double dt){
 		}
 	}
 
-	//Outflow in all boundaries
-	
+	////////////////////////////////////
 	//Boundary conditions for X
+	//Periodic
 	for(i=0; i<(ROWS+2*Ng); ++i){
 		for(q=0; q<Nq; ++q){
 			//Left Side
-			prim[Nq*(COLS+2*Ng)*i + Nq*0              + q] = prim[Nq*(COLS+2*Ng)*i + Nq*Ng       + q];
-			prim[Nq*(COLS+2*Ng)*i + Nq*1              + q] = prim[Nq*(COLS+2*Ng)*i + Nq*Ng       + q];
+			prim[Nq*(COLS+2*Ng)*i + Nq*0           + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+0) + q];
+			prim[Nq*(COLS+2*Ng)*i + Nq*1           + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+1) + q];
 			//Right Side
-			prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+2*Ng -1) + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+1) + q];
-			prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+2*Ng -2) + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+1) + q];
+			prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+Ng+1) + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(Ng+1)   + q];
+			prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+Ng+0) + q] = prim[Nq*(COLS+2*Ng)*i + Nq*(Ng+0)   + q];
 
 		}
 	}
 
 	//Boundary conditions for Y
+	//Reflective
 	for(j=0; j<(COLS+2*Ng); ++j){
 		for(q=0; q<Nq; ++q){
-			
-			//Bottom
-			prim[Nq*(COLS+2*Ng)*0               + Nq*j + q] = prim[Nq*(COLS+2*Ng)*Ng     + Nq*j + q];
-			prim[Nq*(COLS+2*Ng)*1               + Nq*j + q] = prim[Nq*(COLS+2*Ng)*Ng     + Nq*j + q];
-			
-			//Top
-			prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng - 2) + Nq*j + q] = prim[Nq*(COLS+2*Ng)*(ROWS+1) + Nq*j + q];
-			prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng - 1) + Nq*j + q] = prim[Nq*(COLS+2*Ng)*(ROWS+1) + Nq*j + q];
 
+			if(q == 3){
+				//Bottom
+				prim[Nq*(COLS+2*Ng)*0 + Nq*j + q] = -prim[Nq*(COLS+2*Ng)*Ng + Nq*j + q];
+				prim[Nq*(COLS+2*Ng)*1 + Nq*j + q] = -prim[Nq*(COLS+2*Ng)*Ng + Nq*j + q];
+				//Top
+				prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng - 2) + Nq*j + VYY] = -prim[Nq*(COLS+2*Ng)*(ROWS+1) + Nq*j + VYY];
+				prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng - 1) + Nq*j + VYY] = -prim[Nq*(COLS+2*Ng)*(ROWS+1) + Nq*j + VYY];
+			}else{
+				//Bottom
+				prim[Nq*(COLS+2*Ng)*0 + Nq*j + q] = prim[Nq*(COLS+2*Ng)*Ng + Nq*j + q];
+				prim[Nq*(COLS+2*Ng)*1 + Nq*j + q] = prim[Nq*(COLS+2*Ng)*Ng + Nq*j + q];
+				//Top
+				prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng - 2) + Nq*j + VYY] = prim[Nq*(COLS+2*Ng)*(ROWS+1) + Nq*j + VYY];
+				prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng - 1) + Nq*j + VYY] = prim[Nq*(COLS+2*Ng)*(ROWS+1) + Nq*j + VYY];
+
+			}
 		}
 	}
 
-/*
-	//Reinput boundary conditions in X
-	for(i=0; i<(ROWS+2*Ng); ++i){
-		for(q=0; q<Nq; ++q){
-			prim[Nq*(COLS+2*Ng)*i + Nq*0               + q] = pLi[Nq*i + q];
-			prim[Nq*(COLS+2*Ng)*i + Nq*(COLS+2*Ng - 1) + q] = pRi[Nq*i + q];
-		}
-	}
-
-	//Reinput boundary conditions in Y
-	for(j=0; j<(COLS+2*Ng); ++j){
-		for(q=0; q<Nq; ++q){
-			prim[Nq*(COLS+2*Ng)*0             + Nq*j + q] = pBi[Nq*j + q];
-			prim[Nq*(COLS+2*Ng)*(ROWS+2*Ng-1) + Nq*j + q] = pAi[Nq*j + q];
-		}
-	}
-*/
 	///////////////////////////////////
-	
 	return(dt);
 }
 
@@ -455,25 +448,14 @@ int main(void){
 		}
 	}
 */
+	
 	double dx, dy, t, dt;
         dx = L/(double)COLS;
 	dy = H/(double)ROWS;
 	t = 0.0;
 	dt = T;
 
-/*
-	dt = advance(prim, dx, dy, dt);
-	printf("%d dt = %e\n", count++, dt);
-	dt = advance(prim, dx, dy, dt);
-	printf("%d dt = %e\n", count++, dt);
-	dt = advance(prim, dx, dy, dt);
-	printf("%d dt = %e\n", count++, dt);
-	dt = advance(prim, dx, dy, dt);
-	printf("%d dt = %e\n", count++ ,dt);
-	dt = advance(prim, dx, dy, dt);
-	printf("%d dt = %e\n", count++ ,dt);
-	dt = advance(prim, dx, dy, dt);
-	printf("%d dt = %e\n", count++ ,dt);
+/*	
 	for(i=0; i<(ROWS+2*Ng); ++i){
 		for(j=0; j<(COLS+2*Ng); ++j){
 			printf("Zone(%d %d): P = %.2e, rho = %.2e, vx = %.2e, vy = %.2e\n",
@@ -481,18 +463,19 @@ int main(void){
 		}
 	}
 
-*/
+*/	
 	while(t<T){
+
+	//	if (count == 500) break;
 		dt = advance(prim, dx, dy, dt);
 		t+=dt;
 		printf("%d dt = %e\n", count++ ,dt);
 		if (dt<1e-20) break;
 	}
-	
+
 	for(i=0; i<(ROWS+2*Ng); ++i){
 		for(j=0; j<(COLS+2*Ng); ++j){
-			fprintf(inFlow, "%e %e %e\n",
-				       	prim[Nq*(COLS+2*Ng)*i+Nq*j + 1], getx(j), gety(i));
+			fprintf(inFlow, "%e %e %e %e %e %e\n", prim[Nq*(COLS+2*Ng)*i+Nq*j + 0], prim[Nq*(COLS+2*Ng)*i+Nq*j + 1], prim[Nq*(COLS+2*Ng)*i + Nq*j + 2], prim[Nq*(COLS+2*Ng)*i + Nq*j + 3], getx(j), gety(i));
 		}
 	}
 
